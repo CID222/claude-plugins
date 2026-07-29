@@ -2,7 +2,7 @@
   "name": "cid",
   "displayName": "CID222 Gateway Connector",
   "description": "Routes Claude Code through the CID222 AI gateway and verifies the connection on every session. Required for all company Claude Code usage.",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "author": {
     "name": "CID222",
     "url": "https://cid222.ai"

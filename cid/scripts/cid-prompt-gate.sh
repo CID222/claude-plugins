@@ -60,14 +60,24 @@ case "$verdict" in
       [ -n "$reasons" ] && msg="$msg Detected: $reasons"
       printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$msg" | cid_json_escape)"
     else
-      # Factual status only — imperative text arriving from a hook reads as a
-      # prompt-injection attempt and gets refused (observed 2026-07-28).
+      # Two audiences, two fields:
+      #   additionalContext -> the model, so it knows the values were flagged.
+      #     Factual status only: imperative text arriving from a hook reads as a
+      #     prompt-injection attempt and gets refused (observed 2026-07-28).
+      #   systemMessage     -> the user, rendered as a warning in the UI. stderr
+      #     is NOT shown for a hook that exits 0, so the earlier stderr warning
+      #     was invisible — this is what makes a mask hit visible at all.
       note="CID222 policy note: this prompt contains values your organization classifies as sensitive"
       [ -n "$reasons" ] && note="$note ($reasons)"
       note="$note. The rule is mask-level, and Claude Code's hook protocol cannot mask prompt text, so the prompt was recorded and passed through unchanged rather than blocked. Tool output on the same session is still masked."
-      printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' \
-        "$(printf '%s' "$note" | cid_json_escape)"
-      echo "[CID] Bu istemde maskelenmesi gereken veri var${reasons:+ ($reasons)}; maskeleme prompt metnine uygulanamıyor, istem kayda alınıp iletildi." >&2
+
+      warn="CID: bu istemde maskelenmesi gereken veri var"
+      [ -n "$reasons" ] && warn="$warn ($reasons)"
+      warn="$warn. Claude Code istem metnini maskelemeye izin vermiyor, bu yüzden istem olduğu gibi iletildi ve kayda alındı. Değerin sağlayıcıya hiç gitmemesi gerekiyorsa CID_PROMPT_MASK_ACTION=block ile istem reddedilir."
+
+      printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s},"systemMessage":%s}\n' \
+        "$(printf '%s' "$note" | cid_json_escape)" \
+        "$(printf '%s' "$warn" | cid_json_escape)"
     fi
     ;;
   *)

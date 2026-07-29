@@ -1,0 +1,19 @@
+{
+  "name": "cid222",
+  "owner": {
+    "name": "CID222",
+    "url": "https://cid222.ai"
+  },
+  "metadata": {
+    "description": "CID222 plugins for Claude Code. Distributed to employees via Claude Team/Enterprise organization settings.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "cid",
+      "source": "./cid",
+      "description": "CID222 inspection for Claude Code: per-prompt and per-tool policy checks plus work-visibility telemetry (repo, branch, session, seat email).",
+      "category": "security"
+    }
+  ]
+}

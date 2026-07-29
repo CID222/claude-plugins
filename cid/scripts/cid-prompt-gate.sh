@@ -34,14 +34,41 @@ if [ -z "$verdict_json" ]; then
 fi
 
 verdict="$(cid_json_field "$verdict_json" verdict)"
+reasons="$(cid_json_field "$verdict_json" reasons)"
+
+# Verdict → action. CID's MASK rules come back as REDACT; its REJECT rules come
+# back as BLOCK.
+#
+# Claude Code's hook protocol cannot rewrite a prompt (only PreToolUse/
+# PostToolUse can rewrite; UserPromptSubmit is block-or-allow), so a MASK rule
+# is unmaskable here. Blocking it — what v0.5.1 did — turned every MASK rule
+# into a REJECT, so a prompt merely mentioning an email never reached the model.
+# That contradicts the log-first profile these rules are written for.
+#
+# Default: MASK → let the prompt through and record it, with a factual note in
+# context and a warning to the user. Sites that would rather refuse the prompt
+# than let the value reach the provider set CID_PROMPT_MASK_ACTION=block.
 case "$verdict" in
-  BLOCK|REDACT)
-    # A prompt cannot be silently masked; a REDACT rule on the prompt path is
-    # enforced as a block. Surface the CID reasons.
-    reasons="$(cid_json_field "$verdict_json" reasons)"
+  BLOCK)
     msg="CID policy blocked this prompt (it contains data your organization's Claude Code policy does not allow). Remove the sensitive content and resend."
     [ -n "$reasons" ] && msg="$msg Detected: $reasons"
     printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$msg" | cid_json_escape)"
+    ;;
+  REDACT)
+    if [ "${CID_PROMPT_MASK_ACTION:-warn}" = "block" ]; then
+      msg="CID policy blocked this prompt: it contains values your organization masks, and prompt text cannot be masked in place. Remove or redact the sensitive content and resend."
+      [ -n "$reasons" ] && msg="$msg Detected: $reasons"
+      printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$msg" | cid_json_escape)"
+    else
+      # Factual status only — imperative text arriving from a hook reads as a
+      # prompt-injection attempt and gets refused (observed 2026-07-28).
+      note="CID222 policy note: this prompt contains values your organization classifies as sensitive"
+      [ -n "$reasons" ] && note="$note ($reasons)"
+      note="$note. The rule is mask-level, and Claude Code's hook protocol cannot mask prompt text, so the prompt was recorded and passed through unchanged rather than blocked. Tool output on the same session is still masked."
+      printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' \
+        "$(printf '%s' "$note" | cid_json_escape)"
+      echo "[CID] Bu istemde maskelenmesi gereken veri var${reasons:+ ($reasons)}; maskeleme prompt metnine uygulanamıyor, istem kayda alınıp iletildi." >&2
+    fi
     ;;
   *)
     : # ALLOW (incl. flag/log-only) — recorded, prompt proceeds.

@@ -94,6 +94,9 @@ PY
 #   $1 = direction (request|response)
 #   $2 = payload (raw text)
 #   $3 = event   (prompt|tool_use)
+# Optional, exported by the caller: CID_TOOL_NAME and CID_TOOL_PATH describe
+# which tool ran and what it touched. Paths only — never file contents, and for
+# Bash only the leading command word, because arguments carry secrets.
 # Prints the JSON verdict body on stdout; empty on error. Sends repo/branch/
 # session/user_email/cwd as metadata (telemetry rides this same call).
 cid_inspect() {
@@ -115,7 +118,7 @@ cid_inspect() {
   pj="$(printf '%s' "$payload" | cid_json_escape)"
   session="$(cid_sanitize_id "${CID_SESSION_ID:-}")"
   mj=$(cat <<JSON
-{"tool":"claude-code","event":"$event","repo":"$repo","branch":"$branch","cwd":"$cwdbase","session":"$session","user_email":"$email","plugin_version":"${CID_PLUGIN_VERSION:-}"}
+{"tool":"claude-code","event":"$event","repo":"$repo","branch":"$branch","cwd":"$cwdbase","session":"$session","user_email":"$email","plugin_version":"${CID_PLUGIN_VERSION:-}","tool_name":"${CID_TOOL_NAME:-}","tool_path":"${CID_TOOL_PATH:-}"}
 JSON
 )
   local body

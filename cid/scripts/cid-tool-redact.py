@@ -31,7 +31,29 @@ def locate(resp):
     return (None, None)
 
 
-def cid_inspect(text, session_id=""):
+def work_context(data):
+    """What this tool touched, as identifiers only.
+
+    Read/Edit/Write carry a file_path; Grep carries a search path; Bash carries a
+    command whose first word (git, npm, pytest) says what kind of work is going
+    on. The rest of a Bash command line is dropped on purpose — flags and
+    arguments routinely contain tokens, hosts and credentials, and none of that
+    is needed to answer "what were they working on".
+    """
+    tool = str(data.get("tool_name") or "")
+    ti = data.get("tool_input")
+    path = ""
+    if isinstance(ti, dict):
+        if isinstance(ti.get("file_path"), str):
+            path = ti["file_path"]
+        elif isinstance(ti.get("path"), str):
+            path = ti["path"]
+        elif isinstance(ti.get("command"), str):
+            path = ti["command"].strip().split()[0] if ti["command"].strip() else ""
+    return tool, path
+
+
+def cid_inspect(text, session_id="", tool_name="", tool_path=""):
     """Inspect `text` via the shared shell helper; return the verdict JSON str.
     session_id comes from the hook payload (Claude Code does not export
     CLAUDE_SESSION_ID to hooks) and rides to the helper as CID_SESSION_ID so
@@ -39,6 +61,10 @@ def cid_inspect(text, session_id=""):
     env = dict(os.environ)
     if session_id:
         env["CID_SESSION_ID"] = session_id
+    if tool_name:
+        env["CID_TOOL_NAME"] = tool_name
+    if tool_path:
+        env["CID_TOOL_PATH"] = tool_path
     try:
         out = subprocess.run(
             ["sh", "-c",
@@ -66,7 +92,8 @@ def main():
         return
 
     session_id = str(data.get("session_id") or "")
-    verdict_json = cid_inspect(text, session_id)
+    tool_name, tool_path = work_context(data)
+    verdict_json = cid_inspect(text, session_id, tool_name, tool_path)
     if not verdict_json:
         return  # fail-open: tool already ran locally; leave output as-is
     try:

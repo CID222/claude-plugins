@@ -58,12 +58,23 @@ except Exception:
 PY
 )"
   fi
+  # Is provider traffic routed through a gateway? When ANTHROPIC_BASE_URL points
+  # somewhere other than Anthropic, a CID gateway is in the request path and can
+  # rewrite the prompt — so the prompt hook must not tell the user masking is
+  # impossible. Recorded here rather than re-derived per prompt.
+  routed=0
+  case "${ANTHROPIC_BASE_URL:-}" in
+    ''|*api.anthropic.com*) : ;;
+    *) routed=1 ;;
+  esac
+
   ctxf="$(cid_ctx_file)"
   {
     printf 'CID_REPO=%s\n' "$remote"
     printf 'CID_BRANCH=%s\n' "$branch"
     printf 'CID_CWD=%s\n' "$cwdbase"
     printf 'CID_EMAIL=%s\n' "$email"
+    printf 'CID_ROUTED=%s\n' "$routed"
   } > "$ctxf" 2>/dev/null || true
 }
 cid_write_ctx

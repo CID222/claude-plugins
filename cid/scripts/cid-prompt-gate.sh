@@ -18,6 +18,15 @@ hook_json="$(cat 2>/dev/null)"
 CID_SESSION_ID="$(cid_session_from_hook "$hook_json")"
 export CID_SESSION_ID
 
+# Routing posture recorded by SessionStart. When a gateway is in the request
+# path it can rewrite the prompt, so the warning below would be both wrong and
+# duplicated by the gateway's own handling.
+routed=0
+ctxf="$(cid_ctx_file)"
+# shellcheck disable=SC1090
+[ -f "$ctxf" ] && . "$ctxf"
+routed="${CID_ROUTED:-0}"
+
 prompt="$(printf '%s' "$hook_json" | python3 -c 'import json,sys;
 try: print(json.load(sys.stdin).get("prompt",""), end="")
 except Exception: pass' 2>/dev/null)"
@@ -70,6 +79,15 @@ case "$verdict" in
       note="CID222 policy note: this prompt contains values your organization classifies as sensitive"
       [ -n "$reasons" ] && note="$note ($reasons)"
       note="$note. The rule is mask-level, and Claude Code's hook protocol cannot mask prompt text, so the prompt was recorded and passed through unchanged rather than blocked. Tool output on the same session is still masked."
+
+      if [ "$routed" = "1" ]; then
+        # A gateway is in the path and masks the prompt itself. Telling the user
+        # "masking cannot be applied" would be false, and warning twice about
+        # one finding is noise — record it and stay quiet.
+        printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' \
+          "$(printf '%s' "$note" | cid_json_escape)"
+        exit 0
+      fi
 
       warn="CID: bu istemde maskelenmesi gereken veri var"
       [ -n "$reasons" ] && warn="$warn ($reasons)"

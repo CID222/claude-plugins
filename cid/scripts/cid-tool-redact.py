@@ -6,6 +6,7 @@ back into that same field — preserving the tool's output shape. Log-only rules
 return ALLOW and are simply recorded. See docs/CLAUDE_CODE_BUILD_PLAN.md."""
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -31,6 +32,44 @@ def locate(resp):
     return (None, None)
 
 
+# Tokens that precede the real command rather than being it.
+_CMD_PREFIXES = {"sudo", "env", "command", "nohup", "time", "exec", "cd", "then", "do"}
+_CMD_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,31}$")
+
+
+def command_word(command):
+    """The command a Bash line actually runs, e.g. `git` / `pytest` / `docker`.
+
+    Naively taking the first whitespace token recorded shell noise as work:
+    `TOK=$(cat f)` was logged as the command `TOK=$(cat`. Walk past assignments,
+    substitutions and wrappers until something that looks like a program name
+    appears, and give up rather than guess.
+    """
+    # `cd x && git status` should report git, not cd or x, so each segment of the
+    # line is considered until one names a program.
+    for segment in re.split(r"&&|\|\||;|\||\n", command or ""):
+        for raw in segment.strip().split():
+            tok = raw.strip("(){}!$\"'`")
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok):
+                _, _, rest = tok.partition("=")
+                # FOO=bar cmd -> the value is data, keep walking. FOO=$(cmd ...)
+                # -> the substitution is the work being done.
+                if not rest.startswith(("$(", "`", '"$(', "'$(")):
+                    continue
+                tok = rest.lstrip("(){}$\"'`")
+            tok = tok.split("/")[-1]  # /usr/bin/python3 -> python3
+            if not tok:
+                continue
+            if tok in _CMD_PREFIXES:
+                # These wrap or precede the real command; `cd` also eats its
+                # argument, so drop the rest of this segment.
+                if tok in ("cd", "then", "do"):
+                    break
+                continue
+            return tok if _CMD_OK.match(tok) else ""
+    return ""
+
+
 def work_context(data):
     """What this tool touched, as identifiers only.
 
@@ -49,7 +88,7 @@ def work_context(data):
         elif isinstance(ti.get("path"), str):
             path = ti["path"]
         elif isinstance(ti.get("command"), str):
-            path = ti["command"].strip().split()[0] if ti["command"].strip() else ""
+            path = command_word(ti["command"])
     return tool, path
 
 

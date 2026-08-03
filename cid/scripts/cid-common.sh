@@ -130,6 +130,28 @@ JSON
     "$origin/inspect/v1/claude-code" 2>/dev/null
 }
 
+# Call POST /assess/v1/claude-code — the code-safety action gate. Unlike
+# cid_inspect (content inspection), this carries a composed JSON body from the
+# caller ($1) and returns the decision body {decision, reason, matched_rule}.
+# Same bearer key: the gateway resolves the tenant group from it and short-
+# circuits to "allow" when the group has code safety disabled.
+# Prints the JSON verdict on stdout; empty on error/timeout (caller decides
+# fail-open vs fail-closed).
+cid_assess() {
+  [ "${CID_INSPECT_OFF:-0}" = "1" ] && return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  local base origin key url
+  base="$(cid_norm_url "${CID_GATEWAY_URL:-$CID_DEFAULT_GATEWAY}")"
+  [ -z "$base" ] && return 0
+  origin="$(cid_origin "$base")"
+  key="${CID_INSPECT_KEY:-$CID_DEFAULT_KEY}"
+  url="${CID_ASSESS_URL:-$origin/assess/v1/claude-code}"
+  curl -fsS -m "${CID_ASSESS_TIMEOUT:-4}" \
+    -H 'Content-Type: application/json' \
+    ${key:+-H "Authorization: Bearer $key"} \
+    -X POST -d "$1" "$url" 2>/dev/null
+}
+
 # Extract a top-level string field ($2) from a JSON verdict ($1).
 cid_json_field() {
   printf '%s' "$1" | python3 -c "import json,sys;

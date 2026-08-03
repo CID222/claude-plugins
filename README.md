@@ -15,7 +15,7 @@ Private marketplace repository. This repo exists **only** to distribute the
 .claude-plugin/marketplace.json   marketplace catalog (name: cid222)
 cid/                              the plugin (name: cid)
 ├── .claude-plugin/plugin.json    version — clients only update when this changes
-├── hooks/hooks.json              SessionStart, UserPromptSubmit, PostToolUse
+├── hooks/hooks.json              SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop
 ├── scripts/                      POSIX sh + python3; cid-preflight.ps1 for Windows
 └── skills/status/SKILL.md        /cid:status
 ```
@@ -30,6 +30,16 @@ On each prompt and on `Read`/`Grep`/`Bash` tool output, hooks POST the content
 to `<gateway>/inspect/v1/claude-code`, which applies the tenant group's filter
 profile (mostly log/flag, some values redacted, a few blocked) and records
 work-visibility telemetry (repo, branch, session, seat email).
+
+Since v0.6.0 it additionally gates **actions** through code safety
+(`<gateway>/assess/v1/claude-code`): a PreToolUse hook on
+`Bash|Write|Edit|MultiEdit|NotebookEdit` gets an `allow / advise / ask /
+interrupt` decision before a command runs or a file lands; a Stop hook posts
+the session's diff for an async deep audit; and the first session on a repo
+org-wide queues a one-time baseline deep scan (dedup by hashed remote URL).
+All of it fails open silently against gateways that don't serve the assess
+routes yet — the full plugin↔gateway contract lives in the source-of-truth
+README (`cid-core/claude-plugin/README.md`).
 
 Baked defaults: gateway `https://api.cid222.live`, the group's inspection key.
 Managed settings may override via `CID_GATEWAY_URL` / `CID_INSPECT_KEY`.

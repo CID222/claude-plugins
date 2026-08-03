@@ -38,12 +38,14 @@ export CID_SESSION_ID
 # session so the per-prompt hooks don't re-shell git.
 cid_write_ctx() {
   command -v git >/dev/null 2>&1 || return 0
-  local remote branch root cwdbase email tmpf ctxf
+  local remote branch root cwdbase email tmpf ctxf head
   remote="$(git config --get remote.origin.url 2>/dev/null)"
   # strip credentials embedded in the URL (https://user:tok@host/…)
   remote="$(printf '%s' "$remote" | sed -E 's#(https?://)[^@/]*@#\1#')"
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
   root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  # Session-start commit: the diff baseline for the Stop-hook session audit.
+  head="$(git rev-parse HEAD 2>/dev/null)"
   cwdbase="$(basename "${root:-$PWD}")"
   email=""
   if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && command -v python3 >/dev/null 2>&1; then
@@ -74,6 +76,7 @@ PY
     printf 'CID_CWD=%s\n' "$cwdbase"
     printf 'CID_EMAIL=%s\n' "$email"
     printf 'CID_ROUTED=%s\n' "$routed"
+    printf 'CID_HEAD=%s\n' "$head"
     printf 'CID_PLUGIN_VERSION=%s\n' "$plugin_version"
   } > "$ctxf" 2>/dev/null || true
 }

@@ -12,13 +12,15 @@
 #   CID_INSPECT_OFF     1 = skip all inspection (telemetry + filtering off).
 #   CID_INSPECT_TIMEOUT seconds for the inspect call (default 4).
 #
-# BAKED DEFAULTS: this build ships pointed at the CID222 hosted gateway with a
-# key scoped to the "Claude Code" tenant group (log-first profile). The zip
-# works out of the box with no configuration. Managed settings override any of
-# these via the env vars above. The baked key is an INSPECTION key (log/flag
-# policy), not a provider credential; rotate it in the dashboard if leaked.
+# BAKED DEFAULTS: this build ships pointed at the CID222 hosted gateway. The
+# inspection key is deliberately NOT baked — it is delivered per-deployment via
+# managed settings (env.CID_INSPECT_KEY), scoped to that customer's "Claude
+# Code" tenant group. With no key, inspection sends no Authorization header, the
+# gateway rejects it at the public edge, and the hooks fail open (no-op) — the
+# same observable state as the plugin not being installed. Managed settings can
+# also override the gateway host via CID_GATEWAY_URL.
 CID_DEFAULT_GATEWAY="https://api.cid222.live"
-CID_DEFAULT_KEY="cid_key_c530392f852248f65b1b6550e5dfdb33202541ac2fc7b270ec02f67d59ced458"
+CID_DEFAULT_KEY=""
 
 # Normalize a bare host to https://.
 cid_norm_url() {

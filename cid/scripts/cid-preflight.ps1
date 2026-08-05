@@ -19,7 +19,7 @@ function Normalize-Url([string]$u) {
 # Inspection model: hooks send content to <gateway>/inspect/v1. ANTHROPIC_BASE_URL
 # is NOT changed. Posture = "is CID inspection configured and reachable".
 $CidDefaultGateway = 'https://api.cid222.live'
-$CidDefaultKey = 'cid_key_c530392f852248f65b1b6550e5dfdb33202541ac2fc7b270ec02f67d59ced458'
+$CidDefaultKey = ''
 $gwEnv = if ([string]::IsNullOrEmpty($env:CID_GATEWAY_URL)) { $CidDefaultGateway } else { $env:CID_GATEWAY_URL }
 $gateway = Normalize-Url $gwEnv
 
@@ -88,6 +88,11 @@ if ($env:CID_TELEMETRY_OFF -ne '1') {
 # metadata, so a 2xx also registers who this session belongs to.
 $probeUrl = "$origin/inspect/v1/claude-code"
 $probeKey = if ($env:CID_INSPECT_KEY) { $env:CID_INSPECT_KEY } else { $CidDefaultKey }
+if (-not $probeKey) {
+  Write-Output "[CID] CID inspection has no key configured (managed CID_INSPECT_KEY was not delivered). Inspection is NOT applying policy (fail-open); the user should contact IT to deliver the managed CID_INSPECT_KEY."
+  [Console]::Error.WriteLine("[CID] CID_INSPECT_KEY tanimli degil - inceleme YAPILMIYOR (fail-open). IT'ye bildirin.")
+  exit 0
+}
 $code = 0
 try {
   $resp = Invoke-WebRequest -Uri $probeUrl -Method Post -TimeoutSec 4 -UseBasicParsing `

@@ -21,12 +21,18 @@
 # reasons) must be a factual status report, never an instruction — imperative
 # hook text reads as prompt injection and gets refused (observed 2026-07-28).
 #
-# A small LOCAL deterministic gate runs first (no network): a short allow-list
-# of unambiguously destructive actions — a DROP/TRUNCATE, a WHERE-less
-# DELETE/UPDATE, rm -rf, dd, mkfs, a curl|sh pipe — trips Claude Code's native
-# permission prompt ("ask") so the user must confirm. This means the gate is
-# meaningful even where the /assess route isn't deployed yet; when it is, the
-# server verdict layers on top for everything the local rules don't catch.
+# A LOCAL deterministic gate runs first (no network). It covers, for commands:
+# destructive SQL (DROP/TRUNCATE/WHERE-less DELETE|UPDATE/GRANT ALL), destructive
+# filesystem (rm -rf, dd, mkfs, shred, wipefs, chmod -R 777, fork bomb), git
+# history rewrite (force push, reset --hard, clean -f), remote-code/supply-chain
+# (curl|sh, eval/interp of downloads, iex, pip-from-url, insecure npm registry),
+# disabled TLS/host-key verification, infra destruction (kubectl/terraform/helm/
+# docker prune), persistence & system tampering (shell rc, crontab, /etc, sudoers,
+# firewall/SELINUX off), and secret exfiltration — all → native "ask". For file
+# writes: hardcoded secrets (AWS/GitHub/Slack/Anthropic/Google/OpenAI keys,
+# private keys) → ask; insecure-code patterns + CI/Docker footguns → advise. This
+# makes the gate meaningful even where the /assess route isn't deployed yet; when
+# it is, the server verdict layers on top for everything the local rules miss.
 #
 # Knobs: CID_TOOLGATE_OFF=1 (skip gate entirely), CID_LOCAL_GATE_OFF=1 (skip
 # only the local deterministic rules, keep the server assess call),
@@ -65,66 +71,124 @@ except Exception:
     sys.exit(0)
 tool = d.get("tool_name") or ""
 ti = d.get("tool_input") or {}
+FILE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+fpath = ""
 if tool == "Bash":
     text = ti.get("command") or ""
-elif tool == "Write":
-    text = ti.get("content") or ""
-elif tool == "Edit":
-    text = ti.get("new_string") or ""
-elif tool == "MultiEdit":
-    text = "\n".join((e.get("new_string") or "") for e in (ti.get("edits") or []))
-elif tool == "NotebookEdit":
-    text = ti.get("new_source") or ""
+elif tool in FILE_TOOLS:
+    fpath = ti.get("file_path") or ti.get("notebook_path") or ""
+    if tool == "Write":
+        text = ti.get("content") or ""
+    elif tool == "Edit":
+        text = ti.get("new_string") or ""
+    elif tool == "MultiEdit":
+        text = "\n".join((e.get("new_string") or "") for e in (ti.get("edits") or []))
+    else:
+        text = ti.get("new_source") or ""
 else:
     sys.exit(0)
 
-flat = re.sub(r"\s+", " ", text or "").strip()
+raw = text or ""
+flat = re.sub(r"\s+", " ", raw).strip()
 low = flat.lower()
-if not low:
+flow = fpath.lower()
+if not flat:
     sys.exit(0)
 
-hits = []
-def add(rid, why):
-    hits.append((rid, why))
+ask, advise = [], []
+def A(rid, why): ask.append((rid, why))
+def V(rid, why): advise.append((rid, why))
 
-# --- SQL ---
-if re.search(r"\bdrop\s+(table|database|schema)\b", low):
-    add("cc-sql-drop", "a DROP of a table, database or schema (irreversible)")
-if re.search(r"\btruncate\s+table\b", low):
-    add("cc-sql-truncate", "a TRUNCATE, which removes every row in the table")
-if re.search(r"\bdelete\s+from\b", low) and " where " not in low:
-    add("cc-sql-delete-all", "a DELETE with no WHERE clause — it deletes every row")
-if re.search(r"\bupdate\s+\S+\s+set\b", low) and " where " not in low:
-    add("cc-sql-update-all", "an UPDATE with no WHERE clause — it rewrites every row")
-if re.search(r"\bgrant\s+all\b", low):
-    add("cc-sql-grant-all", "a GRANT ALL — a broad privilege grant")
-# --- shell / filesystem ---
-if re.search(r"\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r", low):
-    add("cc-rm-rf", "an rm -rf — a recursive, forced delete")
-if re.search(r"\bdd\s+if=", low):
-    add("cc-dd", "a dd command, which can overwrite whole disks")
-if re.search(r"\bmkfs(\.\w+)?\b", low):
-    add("cc-mkfs", "an mkfs command, which formats a filesystem")
-if re.search(r"\bchmod\s+-r\s+777\b", low):
-    add("cc-chmod-777", "a chmod -R 777 — it makes a whole tree world-writable")
-if re.search(r"(curl|wget)\b[^|]*\|\s*(sudo\s+)?(bash|sh|zsh)\b", low):
-    add("cc-pipe-shell", "a piped download run straight through a shell")
-if re.search(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", flat):
-    add("cc-forkbomb", "a shell fork bomb")
+if tool == "Bash":
+    # --- SQL ---
+    if re.search(r"\bdrop\s+(table|database|schema)\b", low): A("cc-sql-drop", "a DROP of a table, database or schema (irreversible)")
+    if re.search(r"\btruncate\s+table\b", low): A("cc-sql-truncate", "a TRUNCATE, which removes every row in the table")
+    if re.search(r"\bdelete\s+from\b", low) and " where " not in low: A("cc-sql-delete-all", "a DELETE with no WHERE clause — it deletes every row")
+    if re.search(r"\bupdate\s+\S+\s+set\b", low) and " where " not in low: A("cc-sql-update-all", "an UPDATE with no WHERE clause — it rewrites every row")
+    if re.search(r"\bgrant\s+all\b", low): A("cc-sql-grant-all", "a GRANT ALL — a broad privilege grant")
+    # --- destructive filesystem ---
+    if re.search(r"\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r", low): A("cc-rm-rf", "an rm -rf — a recursive, forced delete")
+    if re.search(r"\bdd\s+if=", low): A("cc-dd", "a dd command, which can overwrite whole disks")
+    if re.search(r"\bmkfs(\.\w+)?\b", low): A("cc-mkfs", "an mkfs, which formats a filesystem")
+    if re.search(r"\bshred\b", low): A("cc-shred", "a shred — it irreversibly destroys file data")
+    if re.search(r"\bwipefs\b", low): A("cc-wipefs", "a wipefs — it erases filesystem signatures")
+    if re.search(r"\bchmod\s+-r\s+777\b", low): A("cc-chmod-777", "a chmod -R 777 — it makes a whole tree world-writable")
+    if re.search(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", flat): A("cc-forkbomb", "a shell fork bomb")
+    # --- git history rewrite ---
+    if re.search(r"\bgit\s+push\b[^;&|]*(--force\b|\s-f\b|--force-with-lease\b)", low): A("cc-git-force", "a git force push — it can overwrite shared history")
+    if re.search(r"\bgit\s+reset\s+--hard\b", low): A("cc-git-reset", "a git reset --hard — it discards uncommitted work")
+    if re.search(r"\bgit\s+clean\s+-[a-z]*f", low): A("cc-git-clean", "a git clean -f — it deletes untracked files")
+    # --- remote code execution / supply chain ---
+    if re.search(r"(curl|wget)\b[^|]*\|\s*(sudo\s+)?(bash|sh|zsh)\b", low): A("cc-pipe-shell", "a piped download run straight through a shell")
+    if re.search(r"\beval\b[^;]*\$\(\s*(curl|wget)", low): A("cc-eval-remote", "eval of a downloaded script")
+    if re.search(r"\b(python[0-9.]*|node|ruby|perl)\b[^;]*-e[^;]*\$\(\s*(curl|wget)", low): A("cc-interp-remote", "running a downloaded script through an interpreter")
+    if re.search(r"\biwr\b[^|]*\|\s*iex\b|\biex\s*\(", low): A("cc-iex-remote", "PowerShell downloading and invoking a remote script")
+    if re.search(r"\bpip[0-9]?\s+install\b[^;]*(http://|git\+)", low): A("cc-pip-untrusted", "a pip install from a URL / git source")
+    if re.search(r"\bnpm\s+config\s+set\s+registry\s+http://", low): A("cc-npm-registry", "pointing npm at an insecure (http) registry")
+    # --- TLS / verification disabled ---
+    if re.search(r"(curl|wget)\b[^|]*(\s-k\b|--insecure\b|--no-check-certificate\b)", low): A("cc-tls-curl", "disabling TLS certificate verification on a download")
+    if re.search(r"node_tls_reject_unauthorized\s*=\s*0", low): A("cc-tls-node", "disabling TLS verification (NODE_TLS_REJECT_UNAUTHORIZED=0)")
+    if re.search(r"stricthostkeychecking[= ]no", low): A("cc-ssh-nohostkey", "disabling SSH host-key checking")
+    # --- infra destruction ---
+    if re.search(r"\bkubectl\s+delete\b", low): A("cc-k8s-delete", "a kubectl delete — it removes live cluster resources")
+    if re.search(r"\bterraform\s+destroy\b", low): A("cc-tf-destroy", "a terraform destroy — it tears down provisioned infra")
+    if re.search(r"\bdocker\s+system\s+prune\b[^;]*-a|\bdocker\s+system\s+prune\s+-a", low): A("cc-docker-prune", "a docker system prune -a — it removes all unused images/volumes")
+    if re.search(r"\bhelm\s+(delete|uninstall)\b", low): A("cc-helm-delete", "a helm uninstall — it removes a deployed release")
+    # --- persistence / system tampering ---
+    if re.search(r">>?\s*~?/?(\.bashrc|\.zshrc|\.bash_profile|\.profile)\b", low): A("cc-persist-rc", "writing to a shell startup file (a persistence vector)")
+    if re.search(r"\bcrontab\b|>\s*/etc/cron", low): A("cc-persist-cron", "installing a cron job (a persistence vector)")
+    if re.search(r"(>|\btee\b)\s*/etc/|\bvisudo\b|/etc/sudoers", low): A("cc-etc-write", "writing to a system config under /etc")
+    if re.search(r"\bufw\s+disable\b|\biptables\s+-f\b|\bsetenforce\s+0\b", low): A("cc-security-off", "disabling a host firewall / SELinux")
+    # --- secret exfiltration ---
+    if re.search(r"(curl|wget|nc|ncat)\b", low) and re.search(r"(\.env\b|id_rsa\b|\.aws/credentials|\.ssh/id|\.pgpass|\.netrc|\$[a-z_]*secret|\$[a-z_]*token|\$[a-z_]*password)", low): A("cc-exfil", "sending environment or credential data to a remote host")
+    if re.search(r"\benv\b\s*\|\s*(curl|wget|nc)", low): A("cc-exfil", "piping the environment to a network command")
+    # --- sensitive read (advise) ---
+    if re.search(r"\b(cat|less|head|tail)\b[^|;]*(\.env\b|id_rsa\b|\.aws/credentials|\.ssh/id|\.pgpass|\.netrc)|/etc/shadow", low): V("cc-read-secret", "reading a secret / credentials file")
+else:
+    # ---- file content being written ----
+    if re.search(r"AKIA[0-9A-Z]{16}", raw): A("cc-secret-aws", "an AWS access key id being written into a file")
+    if re.search(r"-----BEGIN\s+[A-Z0-9 ]*PRIVATE KEY-----", raw): A("cc-secret-privkey", "a private key being written into a file")
+    if re.search(r"\bghp_[A-Za-z0-9]{30,}", raw): A("cc-secret-ghp", "a GitHub token being written into a file")
+    if re.search(r"\bxox[baprs]-[A-Za-z0-9-]{10,}", raw): A("cc-secret-slack", "a Slack token being written into a file")
+    if re.search(r"\bsk-ant-[A-Za-z0-9_-]{20,}", raw): A("cc-secret-anthropic", "an Anthropic API key being written into a file")
+    if re.search(r"\bAIza[0-9A-Za-z_-]{30,}", raw): A("cc-secret-google", "a Google API key being written into a file")
+    if re.search(r"\bsk-[A-Za-z0-9]{32,}", raw): A("cc-secret-openai", "an OpenAI-style API key being written into a file")
+    # insecure code patterns (advise)
+    if re.search(r"verify\s*=\s*False\b", raw): V("cc-code-verify", "TLS verification disabled in code (verify=False)")
+    if re.search(r"InsecureSkipVerify\s*:\s*true", raw): V("cc-code-tlsskip", "TLS verification disabled in code (InsecureSkipVerify)")
+    if re.search(r"rejectUnauthorized\s*:\s*false", raw): V("cc-code-rejectunauth", "TLS verification disabled in code (rejectUnauthorized:false)")
+    if re.search(r"dangerouslySetInnerHTML", raw): V("cc-code-xss", "dangerouslySetInnerHTML (a possible XSS sink)")
+    if re.search(r"\beval\s*\(", raw): V("cc-code-eval", "an eval() call")
+    if re.search(r"child_process\.exec\s*\(", raw): V("cc-code-exec", "child_process.exec (a possible command-injection sink)")
+    if re.search(r"#\s*nosec\b", raw): V("cc-code-nosec", "a suppressed security check (# nosec)")
+    if re.search(r"pickle\.loads?\s*\(", raw): V("cc-code-pickle", "pickle deserialization (an RCE risk)")
+    # CI / supply-chain files (advise)
+    if (re.search(r"\.github/workflows/", flow) or re.search(r"(^|/)dockerfile", flow)) and re.search(r"(curl|wget)[^|]*\|\s*(bash|sh)", low): V("cc-ci-pipe", "a piped-download-to-shell inside a CI / Docker build file")
+    if re.search(r"privileged\s*:\s*true", raw): V("cc-k8s-priv", "a privileged: true container spec")
 
-if not hits:
+if not ask and not advise:
     sys.exit(0)
-rid, why = hits[0]
-reason = (
-    "CID222 code-safety flagged this: it looks like " + why + ". "
-    "This is a factual notice; the confirmation below is Claude Code's own. "
-    "[rule: " + rid + "]"
-)
-print(json.dumps({"hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "ask",
-    "permissionDecisionReason": reason,
-}}))
+if ask:
+    rid, why = ask[0]
+    reason = ("CID222 code-safety flagged this: it looks like " + why + ". "
+              "This is a factual notice; the confirmation below is Claude Code's own. "
+              "[rule: " + rid + "]")
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": reason,
+    }}))
+else:
+    notes = "; ".join(w for _, w in advise[:3])
+    ids = ",".join(r for r, _ in advise[:3])
+    note = ("CID222 code-safety note: " + notes + ". The action was allowed; "
+            "this is a recorded factual finding, not an instruction. [rule: " + ids + "]")
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "permissionDecisionReason": note,
+        "additionalContext": note,
+    }}))
 PY
 )"
   if [ -n "$local_out" ]; then

@@ -21,8 +21,17 @@
 # reasons) must be a factual status report, never an instruction — imperative
 # hook text reads as prompt injection and gets refused (observed 2026-07-28).
 #
-# Knobs: CID_TOOLGATE_OFF=1 (skip gate), CID_ASSESS_URL, CID_ASSESS_TIMEOUT
-# (default 4 s), CID_FAIL_OPEN (default 1), plus the shared cid-common.sh env.
+# A small LOCAL deterministic gate runs first (no network): a short allow-list
+# of unambiguously destructive actions — a DROP/TRUNCATE, a WHERE-less
+# DELETE/UPDATE, rm -rf, dd, mkfs, a curl|sh pipe — trips Claude Code's native
+# permission prompt ("ask") so the user must confirm. This means the gate is
+# meaningful even where the /assess route isn't deployed yet; when it is, the
+# server verdict layers on top for everything the local rules don't catch.
+#
+# Knobs: CID_TOOLGATE_OFF=1 (skip gate entirely), CID_LOCAL_GATE_OFF=1 (skip
+# only the local deterministic rules, keep the server assess call),
+# CID_ASSESS_URL, CID_ASSESS_TIMEOUT (default 4 s), CID_FAIL_OPEN (default 1),
+# plus the shared cid-common.sh env.
 set -u
 
 here="$(dirname "$0")"
@@ -41,6 +50,88 @@ ctxf="$(cid_ctx_file)"
 [ -f "$ctxf" ] && . "$ctxf"
 export CID_REPO="${CID_REPO:-}" CID_BRANCH="${CID_BRANCH:-}" \
   CID_EMAIL="${CID_EMAIL:-}" CID_PLUGIN_VERSION="${CID_PLUGIN_VERSION:-}"
+
+# ---- Local deterministic high-risk gate (runs with NO backend) --------------
+# Matches a short list of unambiguously destructive patterns in the command (or
+# the file content about to be written) and, on a hit, emits a native "ask" so
+# Claude Code shows its confirmation prompt with the reason. Deterministic and
+# offline: the demo-safe floor beneath the server assess verdict.
+if [ "${CID_LOCAL_GATE_OFF:-0}" != "1" ]; then
+  local_out="$(CID_HOOK_JSON="$hook_json" python3 - <<'PY' 2>/dev/null
+import json, os, re, sys
+try:
+    d = json.loads(os.environ.get("CID_HOOK_JSON") or "{}")
+except Exception:
+    sys.exit(0)
+tool = d.get("tool_name") or ""
+ti = d.get("tool_input") or {}
+if tool == "Bash":
+    text = ti.get("command") or ""
+elif tool == "Write":
+    text = ti.get("content") or ""
+elif tool == "Edit":
+    text = ti.get("new_string") or ""
+elif tool == "MultiEdit":
+    text = "\n".join((e.get("new_string") or "") for e in (ti.get("edits") or []))
+elif tool == "NotebookEdit":
+    text = ti.get("new_source") or ""
+else:
+    sys.exit(0)
+
+flat = re.sub(r"\s+", " ", text or "").strip()
+low = flat.lower()
+if not low:
+    sys.exit(0)
+
+hits = []
+def add(rid, why):
+    hits.append((rid, why))
+
+# --- SQL ---
+if re.search(r"\bdrop\s+(table|database|schema)\b", low):
+    add("cc-sql-drop", "a DROP of a table, database or schema (irreversible)")
+if re.search(r"\btruncate\s+table\b", low):
+    add("cc-sql-truncate", "a TRUNCATE, which removes every row in the table")
+if re.search(r"\bdelete\s+from\b", low) and " where " not in low:
+    add("cc-sql-delete-all", "a DELETE with no WHERE clause — it deletes every row")
+if re.search(r"\bupdate\s+\S+\s+set\b", low) and " where " not in low:
+    add("cc-sql-update-all", "an UPDATE with no WHERE clause — it rewrites every row")
+if re.search(r"\bgrant\s+all\b", low):
+    add("cc-sql-grant-all", "a GRANT ALL — a broad privilege grant")
+# --- shell / filesystem ---
+if re.search(r"\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r", low):
+    add("cc-rm-rf", "an rm -rf — a recursive, forced delete")
+if re.search(r"\bdd\s+if=", low):
+    add("cc-dd", "a dd command, which can overwrite whole disks")
+if re.search(r"\bmkfs(\.\w+)?\b", low):
+    add("cc-mkfs", "an mkfs command, which formats a filesystem")
+if re.search(r"\bchmod\s+-r\s+777\b", low):
+    add("cc-chmod-777", "a chmod -R 777 — it makes a whole tree world-writable")
+if re.search(r"(curl|wget)\b[^|]*\|\s*(sudo\s+)?(bash|sh|zsh)\b", low):
+    add("cc-pipe-shell", "a piped download run straight through a shell")
+if re.search(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", flat):
+    add("cc-forkbomb", "a shell fork bomb")
+
+if not hits:
+    sys.exit(0)
+rid, why = hits[0]
+reason = (
+    "CID222 code-safety flagged this: it looks like " + why + ". "
+    "This is a factual notice; the confirmation below is Claude Code's own. "
+    "[rule: " + rid + "]"
+)
+print(json.dumps({"hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": reason,
+}}))
+PY
+)"
+  if [ -n "$local_out" ]; then
+    printf '%s\n' "$local_out"
+    exit 0
+  fi
+fi
 
 # Compose the assess request from the hook payload. Prints nothing when the
 # tool/input is not gate-worthy (unknown tool, empty command) — then allow.

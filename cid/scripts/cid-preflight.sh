@@ -193,6 +193,13 @@ else
   emit_context "[CID] CID inspection is configured for this session ($gateway). (curl unavailable; gateway health not verified.)"
 fi
 
+# Routing posture (2026-08-09): when ANTHROPIC_BASE_URL points provider traffic
+# at the CID proxy (transparent Anthropic passthrough), the session is not
+# inspection-only — say so, or a routed demo contradicts the plugin's own story.
+if [ "${routed:-0}" = "1" ]; then
+  emit_context "[CID] Provider traffic is ROUTED through the CID gateway (ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}): every Anthropic request passes through the gateway, which can inspect, mask or block it in-path before it reaches the model."
+fi
+
 # Housekeeping: drop stale per-session ctx files (best effort).
 find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'cid-ctx-*.env' -mtime +7 -delete 2>/dev/null || true
 

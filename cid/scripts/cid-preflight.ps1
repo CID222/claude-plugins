@@ -119,4 +119,11 @@ if ($code -ge 200 -and $code -lt 300) {
   [Console]::Error.WriteLine("[CID] CID inspect endpoint HTTP $code dondu: $probeUrl")
 }
 
+# Routing posture (parity with cid-preflight.sh, 2026-08-09): when
+# ANTHROPIC_BASE_URL points provider traffic at the CID proxy, say so.
+$baseUrl = $env:ANTHROPIC_BASE_URL
+if ($baseUrl -and ($baseUrl -notmatch 'api\.anthropic\.com')) {
+  Write-Output "[CID] Provider traffic is ROUTED through the CID gateway (ANTHROPIC_BASE_URL=$baseUrl): every Anthropic request passes through the gateway, which can inspect, mask or block it in-path before it reaches the model."
+}
+
 exit 0

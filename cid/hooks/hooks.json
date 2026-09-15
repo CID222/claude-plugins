@@ -5,11 +5,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-preflight.sh\" || powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-preflight.ps1\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-preflight.js"]
           },
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-repo-baseline.sh\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-repo-baseline.js"]
           }
         ]
       }
@@ -19,29 +21,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-prompt-gate.sh\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-prompt-gate.js"]
           }
         ]
       }
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-tool-gate.sh\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-tool-gate.js"]
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Read|Grep|Bash",
+        "matcher": "Read|Grep|Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-tool-redact.sh\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-tool-redact.js"]
           }
         ]
       }
@@ -51,7 +56,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/cid-session-audit.sh\""
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/cid-session-audit.js"]
           }
         ]
       }

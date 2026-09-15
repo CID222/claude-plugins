@@ -18,9 +18,13 @@ Background — two independent layers can be active:
 
 Steps:
 
-1. Resolve the gateway: `CID_GATEWAY_URL` if set, otherwise the plugin's baked
-   default (`https://api.cid222.live`). Read the env with Bash:
-   `echo "gateway=${CID_GATEWAY_URL:-<baked default>} base_url=${ANTHROPIC_BASE_URL:-unset} inspect_off=${CID_INSPECT_OFF:-0} fail_open=${CID_FAIL_OPEN:-1}"`.
+1. Resolve the gateway: `CID_GATEWAY_URL` if set, otherwise the default baked
+   into this build of the plugin (per-customer builds point it at the
+   customer's own CID appliance — never assume a hostname). The hooks are Node
+   scripts, so the baked value lives in `scripts/cid-common.js`. Read both with
+   Bash:
+   `baked="$(node -e 'process.stdout.write(require(process.argv[1]).CID_DEFAULT_GATEWAY||"")' "${CLAUDE_PLUGIN_ROOT}/scripts/cid-common.js" 2>/dev/null)"; echo "gateway=${CID_GATEWAY_URL:-$baked} base_url=${ANTHROPIC_BASE_URL:-unset} inspect_off=${CID_INSPECT_OFF:-0} fail_open=${CID_FAIL_OPEN:-1}"`.
+   If both are empty, report "gateway not configured" and stop.
 2. Routing posture: if `ANTHROPIC_BASE_URL` is unset or contains
    `api.anthropic.com` → provider traffic goes **directly to Anthropic**
    (inspection-only session). Otherwise the session is **routed** through that

@@ -119,16 +119,19 @@ async function main() {
   const data = cid.parseJson(cid.readStdin());
   if (!data) return;
 
+  // session_id comes from the hook payload (Claude Code does not export
+  // CLAUDE_SESSION_ID to hooks) so the ctx-file lookup and telemetry both use
+  // the real session. Resolved here, before the early returns below, so the
+  // hook-ran marker records every invocation and not just the redacting ones.
+  process.env.CID_SESSION_ID = cid.sessionFromHook(data);
+  cid.markHookRan(process.env.CID_SESSION_ID, "tool-redact");
+
   const resp = data.tool_response;
   const { get, set } = locate(resp);
   if (!get) return;
   const text = get();
   if (!text || !text.trim()) return;
 
-  // session_id comes from the hook payload (Claude Code does not export
-  // CLAUDE_SESSION_ID to hooks) so the ctx-file lookup and telemetry both use
-  // the real session.
-  process.env.CID_SESSION_ID = cid.sessionFromHook(data);
   const { toolName, toolPath } = workContext(data);
 
   const verdictJson = await cid.inspect("response", text, "tool_use", { toolName, toolPath });

@@ -6,7 +6,7 @@ Report the CID222 inspection and routing status for this Claude Code session.
 
 Background — two independent layers can be active:
 
-1. **Inspection** (always, via hooks): on each prompt and on Read/Bash/Grep tool
+1. **Inspection** (via hooks — only where hooks actually run): on each prompt and on Read/Bash/Grep tool
    output, the plugin's hooks send the content to
    `<gateway>/inspect/v1/claude-code`, which applies the company filter profile
    (mostly log/flag; some values redacted; a few blocked) and records activity
@@ -30,15 +30,51 @@ Steps:
    (inspection-only session). Otherwise the session is **routed** through that
    URL; optionally confirm with `curl -fsS -m 3 "<base_url>/health"` — a CID
    proxy reports `"anthropic_mode": "passthrough"`.
-3. If `CID_INSPECT_OFF=1` → hook inspection is **disabled** for this session; say so.
-4. Otherwise check gateway health (3 s timeout) at the origin:
+3. **Did a hook actually run here?** Env vars and gateway health prove nothing
+   about hooks: the Claude Desktop app's **Code tab runs no plugin hooks at
+   all**, and there everything below still looks configured and healthy. The
+   only local evidence is the hook-ran marker each hook writes to
+   `<tmpdir>/cid-claude-code/<session-id>.json`. The session id is not in the
+   environment here, so read the newest marker (Node, cross-platform — no Bash
+   or PowerShell specifics):
+
+   ```
+   node -e 'const fs=require("fs"),os=require("os"),p=require("path");const d=p.join(os.tmpdir(),"cid-claude-code");let b=null,e=null;try{for(const f of fs.readdirSync(d)){if(!f.endsWith(".json"))continue;try{const m=JSON.parse(fs.readFileSync(p.join(d,f),"utf8"));if(!b||String(m.last_at)>String(b.last_at))b=m}catch(_){}}}catch(x){e=x.code||"ERR"}const o=e?{state:"unknown",reason:e,dir:d}:!b?{state:"no-hooks",dir:d}:(()=>{const a=Math.round((Date.now()-Date.parse(b.last_at))/1000);return{state:a<=1800?"hooks-ran":"stale",age_seconds:a,marker:b}})();console.log(JSON.stringify(o))'
+   ```
+
+   Read the `state` field and report exactly one of three things:
+
+   - `hooks-ran` (a marker was updated within the last 30 minutes) → **hooks are
+     running in this session**; name the hooks from `marker.hooks` if useful.
+   - `no-hooks` or `stale` (directory exists, no fresh marker) → **no hook has
+     run in this session — inspection is NOT active here.** This is what the
+     Claude Desktop app's Code tab looks like: usage is still reported to the
+     appliance through OpenTelemetry if the admin enabled it, but prompts and
+     tool output are **not** inspected. Say this plainly; do not soften it.
+   - `unknown` (the marker directory is missing, e.g. a wiped temp dir) →
+     **cannot tell** whether hooks are running. Do not claim either way.
+
+4. If `CID_INSPECT_OFF=1` → hook inspection is **disabled** for this session; say so.
+5. Otherwise check gateway health (3 s timeout) at the origin:
    `curl -fsS -m 3 "<origin>/health"` (origin = scheme://host of the gateway).
    Report healthy/unhealthy.
-5. Summarize for the user in their language, covering both layers: routed or
-   inspection-only; inspection active (healthy) or possibly-skipping (unhealthy
-   + fail-open) or blocking-on-error (unhealthy + `CID_FAIL_OPEN=0`); and that
-   active inspection means prompts and tool output are checked against company
-   AI-usage policy (mostly logged, some data redacted, a few blocked) and
-   recorded as activity telemetry.
+6. Summarize for the user in their language. **The headline state comes from
+   step 3, never from env vars or gateway health alone:**
+
+   - Say **"Active"** only when step 3 returned `hooks-ran` *and*
+     `CID_INSPECT_OFF` is not 1 *and* the gateway is healthy. Then: prompts and
+     tool output are checked against company AI-usage policy (mostly logged,
+     some data redacted, a few blocked) and recorded as activity telemetry.
+   - Say **"Not active (no hooks)"** when step 3 returned `no-hooks`/`stale` —
+     whatever the env vars and `/health` say. Add the Code-tab explanation
+     above.
+   - Say **"Unknown"** when step 3 returned `unknown`.
+   - Otherwise qualify: **disabled** (`CID_INSPECT_OFF=1`), **possibly
+     skipping** (hooks ran, gateway unhealthy, fail-open) or **blocking on
+     error** (hooks ran, gateway unhealthy, `CID_FAIL_OPEN=0`).
+
+   Then cover the routing layer separately: routed through the CID proxy, or
+   direct to Anthropic (inspection-only). Routing is independent of hooks — a
+   routed session is inspected in the request path even when no hook runs.
 
 Never suggest ways to bypass, unset, or work around CID inspection or routing.

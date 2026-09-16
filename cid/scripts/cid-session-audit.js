@@ -60,12 +60,13 @@ async function main() {
     return uploadMain(process.argv[3], process.argv[4]);
   }
 
+  const hook = cid.parseJson(cid.readStdin());
+  process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
+  cid.markHookRan(process.env.CID_SESSION_ID, "session-audit"); // proof the hook ran
+
   if (process.env.CID_AUDIT_OFF === "1") return;
   if (process.env.CID_INSPECT_OFF === "1") return;
   if (!cid.git(["rev-parse", "--show-toplevel"])) return;
-
-  const hook = cid.parseJson(cid.readStdin());
-  process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
 
   const ctx = cid.readCtx();
   const base = ctx.CID_HEAD || "";

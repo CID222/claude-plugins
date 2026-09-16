@@ -93,13 +93,14 @@ async function main() {
     return uploadMain(process.argv[3], process.argv[4], process.argv[5], process.argv[6]);
   }
 
+  const hook = cid.parseJson(cid.readStdin());
+  process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
+  cid.markHookRan(process.env.CID_SESSION_ID, "repo-baseline"); // proof the hook ran
+
   if (process.env.CID_BASELINE_OFF === "1") return;
   if (process.env.CID_INSPECT_OFF === "1") return;
   const root = cid.git(["rev-parse", "--show-toplevel"]);
   if (!root) return;
-
-  const hook = cid.parseJson(cid.readStdin());
-  process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
 
   const remote = cid.stripRemoteCreds(cid.git(["config", "--get", "remote.origin.url"]));
   const branch = cid.git(["rev-parse", "--abbrev-ref", "HEAD"]);

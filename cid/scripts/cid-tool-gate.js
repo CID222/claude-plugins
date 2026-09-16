@@ -236,10 +236,11 @@ function emit(obj) {
 }
 
 async function main() {
-  if (process.env.CID_TOOLGATE_OFF === "1") return;
-
   const hook = cid.parseJson(cid.readStdin());
   process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
+  cid.markHookRan(process.env.CID_SESSION_ID, "tool-gate"); // proof the hook ran
+
+  if (process.env.CID_TOOLGATE_OFF === "1") return;
 
   // Repo/session context cached by SessionStart (identity only, never content).
   const ctx = cid.readCtx();

@@ -101,6 +101,50 @@ function ctxFile() {
   return path.join(tmpDir(), "cid-ctx-" + sessionKey() + ".env");
 }
 
+// --- Hook-ran marker ----------------------------------------------------------
+// Local proof that a hook PROCESS actually ran in this session. The Claude
+// Desktop app's Code tab runs no plugin hooks, yet env vars and gateway health
+// look exactly as they do in the CLI — so /cid:status reported "Active" where
+// nothing was being inspected. This marker is the only evidence that
+// distinguishes the two, so every hook writes it BEFORE any early return
+// (CID_INSPECT_OFF included): the claim is "the hook ran", not "it inspected".
+function markerDir() {
+  return path.join(tmpDir(), "cid-claude-code");
+}
+
+// Best-effort, never throws, never affects the hook's exit code.
+function markHookRan(sessionId, hookName) {
+  try {
+    const sid = sanitizeId(sessionId) || "nosession";
+    const dir = markerDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, sid + ".json");
+    let prev = {};
+    try {
+      prev = JSON.parse(fs.readFileSync(file, "utf8")) || {};
+    } catch (_) {
+      prev = {};
+    }
+    const hooks = (prev && typeof prev.hooks === "object" && prev.hooks) || {};
+    const name = String(hookName || "unknown");
+    hooks[name] = (Number(hooks[name]) || 0) + 1;
+    const now = new Date().toISOString();
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        session: sid,
+        first_at: prev.first_at || now,
+        last_at: now,
+        hooks,
+        plugin_version:
+          process.env.CID_PLUGIN_VERSION || ctxValue(readCtx(), "CID_PLUGIN_VERSION") || "",
+      })
+    );
+  } catch (_) {
+    /* a marker must never break a hook */
+  }
+}
+
 // Last inspect HTTP status for this session ("<code> <epoch>"). Written by
 // inspect() on every call so gates can tell an auth failure (401/403) apart
 // from an unreachable gateway (000) when the verdict comes back empty.
@@ -424,6 +468,8 @@ module.exports = {
   sessionKey,
   tmpDir,
   ctxFile,
+  markerDir,
+  markHookRan,
   inspectStatusFile,
   readCtx,
   ctxValue,

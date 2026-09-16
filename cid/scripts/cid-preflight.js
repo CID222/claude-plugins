@@ -95,14 +95,16 @@ function sweepStaleCtx() {
 }
 
 async function main() {
-  if (process.env.CID_PREFLIGHT_OFF === "1") return;
-
   // Resolve the session id from the hook payload on stdin. Claude Code does NOT
   // export CLAUDE_SESSION_ID to hook processes — every hook gets `session_id` in
   // its stdin JSON instead. Without this, all concurrent sessions shared one
   // "nosession" ctx file and overwrote each other's repo/branch.
   const hook = cid.parseJson(cid.readStdin());
   process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
+  // Proof this hook process ran, written before every opt-out below.
+  cid.markHookRan(process.env.CID_SESSION_ID, "preflight");
+
+  if (process.env.CID_PREFLIGHT_OFF === "1") return;
 
   // Resolved before writeCtx: the prompt/tool hooks are separate processes and
   // only see what lands in the ctx file, so the version has to travel that way or

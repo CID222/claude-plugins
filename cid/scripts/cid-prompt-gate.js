@@ -15,6 +15,9 @@ async function main() {
   // not export CLAUDE_SESSION_ID to hooks), the prompt is field `prompt`.
   const hook = cid.parseJson(cid.readStdin());
   process.env.CID_SESSION_ID = cid.sessionFromHook(hook);
+  // Proof this hook process ran — written before the empty-prompt return and
+  // before inspect()'s CID_INSPECT_OFF short-circuit.
+  cid.markHookRan(process.env.CID_SESSION_ID, "prompt-gate");
 
   // Routing posture recorded by SessionStart. When a gateway is in the request
   // path it can rewrite the prompt, so the warning below would be both wrong and

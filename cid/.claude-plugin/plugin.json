@@ -2,7 +2,7 @@
   "name": "cid",
   "displayName": "CID222 Gateway Connector",
   "description": "Connects Claude Code to the CID222 AI gateway: session verification, prompt/tool-output inspection, and code-safety gating of commands and file writes. Required for all company Claude Code usage.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "author": {
     "name": "CID222",
     "url": "https://cid222.ai"
